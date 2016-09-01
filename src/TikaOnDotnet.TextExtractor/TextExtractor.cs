@@ -25,7 +25,15 @@ namespace TikaOnDotNet.TextExtraction
 		/// <param name="data">A byte array of data which will have its text extracted.</param>
 		TextExtractionResult Extract(byte[] data);
 
-		/// <summary>
+    		/// <summary>
+    		/// Extract text from a byte[]. This is a good way to get data from arbitrary sources.
+    		/// </summary>
+    		/// <param name="data">A byte array of data which will have its text extracted.</param>
+    		/// <param name="filePath">A string containing the file name to help the detector determine the proper parser</param>
+    		/// <param name="ContentType">A string that has the mime type to help the detector determine the correct parser to use</param>
+    		TextExtractionResult Extract(byte[] data, string filePath, string ContentType);
+    		
+    		/// <summary>
 		/// Extract text from a URI. Time to create your very of web spider.
 		/// </summary>
 		/// <param name="uri">URL which will have its text extracted.</param>
@@ -41,6 +49,38 @@ namespace TikaOnDotNet.TextExtraction
 
 	public class TextExtractor : ITextExtractor
 	{
+    		private static TikaConfig config = TikaConfig.getDefaultConfig();
+    		private TesseractOCRConfig tesseractOCRConfig;
+    		private static string tesseractPath = string.Empty;
+    		public string TesseractPath 
+    		{ 
+      			get { return tesseractPath; } 
+      			set 
+      			{ 
+        			tesseractPath = value;
+        			tesseractOCRConfig = new TesseractOCRConfig();
+        			//todo: validate directory and tesseract.exe at location
+        			tesseractOCRConfig.setTesseractPath(tesseractPath);
+      			} 
+    		}
+    		
+    		public bool IsOCRPathEnabled 
+    		{ 
+      			get { return tesseractOCRConfig != null; } 
+      			set
+      			{
+        			if (value)
+        			{
+          				tesseractOCRConfig = new TesseractOCRConfig();
+          				tesseractOCRConfig.setTesseractPath(tesseractPath);
+        			}
+        			else
+        			{
+          				tesseractOCRConfig = null;
+        			}
+      			}
+    		}
+
 		public TextExtractionResult Extract(string filePath)
 		{
 			try
@@ -61,8 +101,47 @@ namespace TikaOnDotNet.TextExtraction
 
 		public TextExtractionResult Extract(byte[] data)
 		{
-			return Extract(metadata => TikaInputStream.get(data, metadata));
+      			return Extract(data, string.Empty, string.Empty);
 		}
+
+	    	public TextExtractionResult Extract(byte[] data, string filePath, string ContentType)
+    		{
+      			TextExtractionResult result = Extract
+        		(
+          			metadata =>
+          			{
+            				metadata.add(org.apache.tika.metadata.TikaMetadataKeys.__Fields.RESOURCE_NAME_KEY, System.IO.Path.GetFileName(filePath));
+            				metadata.add(org.apache.tika.metadata.TikaMimeKeys.__Fields.TIKA_MIME_FILE, filePath);
+            				try
+            				{
+              					if (!ContentType.Equals(org.apache.tika.mime.MimeTypes.OCTET_STREAM, StringComparison.CurrentCultureIgnoreCase))
+              					{
+                					metadata.add(org.apache.tika.metadata.HttpHeaders.__Fields.CONTENT_TYPE, ContentType);
+              					}
+              					else
+              					{
+                					Detector detector = config.getDetector();
+                					using (org.apache.tika.io.TikaInputStream inputStream = org.apache.tika.io.TikaInputStream.@get(data, metadata))
+                					{
+                  						MediaType foundType = detector.detect(inputStream, metadata);
+                  						if (!foundType.toString().Equals(org.apache.tika.mime.MimeTypes.OCTET_STREAM, StringComparison.CurrentCultureIgnoreCase))
+                  						{
+                    							metadata.add(org.apache.tika.metadata.HttpHeaders.__Fields.CONTENT_TYPE, foundType.toString());
+                  						}
+                					}
+              					}
+            				}
+            				catch (Exception ex)
+            				{
+              					throw ex;
+            				}
+
+            				return TikaInputStream.get(data, metadata);
+          			}
+        		);
+
+      			return result;
+    		}
 
 		public TextExtractionResult Extract(Uri uri)
 		{
@@ -83,6 +162,11 @@ namespace TikaOnDotNet.TextExtraction
 				var metadata = new Metadata();
 				var outputWriter = new StringWriter();
 				var parseContext = new ParseContext();
+
+        			if (IsOCRPathEnabled)
+        			{
+          				parseContext.set(typeof(TesseractOCRConfig), tesseractOCRConfig);
+        			}
 
                 //use the base class type for the key or parts of Tika won't find a usable parser
 				parseContext.set(typeof(Parser), parser);
